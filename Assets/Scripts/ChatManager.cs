@@ -3,10 +3,8 @@ using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
 using UnityEngine.Networking;
-
-using System.Net.Http;
-using System.Threading.Tasks;
 using System.Collections.Generic;
+using System.IO;
 
 public class ChatManager : MonoBehaviour
 {
@@ -17,13 +15,10 @@ public class ChatManager : MonoBehaviour
     public Button sendButton;
     public Button newChatButton;
 
-    List<string> converdationHistory = new List<string>();
-
     [Header("API Settings")]
     public string apiUrl = "https://api.groq.com/openai/v1/chat/completions";
-    public string apiKey = "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"; // clé API GroqCloud.
+    private string apiKey; // Chargée dynamiquement
     public string systemMessage = "Tu es un clone amusant qui raconte des blagues et des anecdotes rigolotes.";
-
 
     [Header("Animation")]
     public Animator npcAnimator;
@@ -31,31 +26,60 @@ public class ChatManager : MonoBehaviour
     [Header("Animation Setting")]
     public float thinkingAnimationDuration = 4.06f;
 
-    void Start()
+    private List<string> conversationHistory = new List<string>();
+
+    private void Start()
     {
         sendButton.onClick.AddListener(SendMessageToAPI);
         newChatButton.onClick.AddListener(ClearChat);
+
+        StartCoroutine(LoadApiKey());
     }
 
-    void SetThinkingState(bool thinking)
+    private IEnumerator LoadApiKey()
+    {
+        string path = Path.Combine(Application.streamingAssetsPath, "apiKey.txt");
+
+        if (File.Exists(path))
+        {
+            if (path.Contains("://") || path.Contains(":///"))
+            {
+                UnityWebRequest www = UnityWebRequest.Get(path);
+                yield return www.SendWebRequest();
+
+                if (www.result == UnityWebRequest.Result.Success)
+                    apiKey = www.downloadHandler.text.Trim();
+                else
+                    Debug.LogError("Erreur de chargement de la clé API : " + www.error);
+            }
+            else
+            {
+                apiKey = File.ReadAllText(path).Trim();
+            }
+        }
+        else
+        {
+            Debug.LogError("Fichier apiKey.txt introuvable dans StreamingAssets.");
+        }
+    }
+
+    private void SetThinkingState(bool thinking)
     {
         npcAnimator.SetBool("isThinking", thinking);
     }
 
-    void SetTalkingState(bool talking)
+    private void SetTalkingState(bool talking)
     {
         npcAnimator.SetBool("isTalking", talking);
     }
 
-    
-    void DisplayMessage(string message)
+    private void DisplayMessage(string message)
     {
-        converdationHistory.Add(message);
+        conversationHistory.Add(message);
         displayResponse.text += "\n" + message;
     }
 
-    // Effet frappe de message
-    IEnumerator TypeMessage(string message)
+    private IEnumerator TypeMessage(string message)
     {
         displayResponse.text += "\nAI :";
         foreach (char letter in message)
@@ -65,34 +89,32 @@ public class ChatManager : MonoBehaviour
         }
     }
 
-    void SendMessageToAPI()
+    private void SendMessageToAPI()
     {
         string userMessage = inputField.text;
-        if (!string.IsNullOrEmpty(userMessage))
+        if (!string.IsNullOrEmpty(userMessage) && !string.IsNullOrEmpty(apiKey))
         {
-            SetThinkingState(true); // Activation de l'etat thinking
+            SetThinkingState(true);
             StartCoroutine(PostRequest(userMessage));
+        }
+        else
+        {
+            displayResponse.text += "\nErreur : clé API non chargée.";
         }
     }
 
-    IEnumerator PostRequest(string message)
+    private IEnumerator PostRequest(string message)
     {
+        conversationHistory.Add($"{{\"role\": \"user\", \"content\": \"{message}\"}}");
 
-        // Ajouter le message de l'utilisateur à l'historique
-        converdationHistory.Add($"{{\"role\": \"user\", \"content\": \"{message}\"}}");
-
-        // Construire le Payload JSON avec le rôle du système et l'historique de la conversation
         string messagePayload = $"{{\"role\": \"system\", \"content\": \"{systemMessage}\"}}";
-
-        foreach (string pastMessage in converdationHistory)
+        foreach (string pastMessage in conversationHistory)
         {
             messagePayload += $" ,{pastMessage}";
         }
 
-        // Construire le payload JSON.
         string jsonData = $"{{\"model\": \"llama3-8b-8192\", \"messages\": [{messagePayload}]}}";
 
-        // Configurer la requête HTTP POST.
         UnityWebRequest request = new UnityWebRequest(apiUrl, "POST");
         byte[] bodyRaw = System.Text.Encoding.UTF8.GetBytes(jsonData);
         request.uploadHandler = new UploadHandlerRaw(bodyRaw);
@@ -100,36 +122,22 @@ public class ChatManager : MonoBehaviour
         request.SetRequestHeader("Content-Type", "application/json");
         request.SetRequestHeader("Authorization", $"Bearer {apiKey}");
 
-        Debug.Log(apiUrl);
-        Debug.Log(jsonData);
-        Debug.Log(apiKey);
-
         yield return request.SendWebRequest();
-
 
         if (request.result == UnityWebRequest.Result.Success)
         {
-            // Extraire et afficher la réponse.
             ResponseData response = JsonUtility.FromJson<ResponseData>(request.downloadHandler.text);
             string aiResponse = response.choices[0].message.content;
 
-            // Ajout de la reponse de l'avatar à l'historique
-            converdationHistory.Add($"{{\"role\": \"assistant\", \"content\": \"{aiResponse}\"}}");
+            conversationHistory.Add($"{{\"role\": \"assistant\", \"content\": \"{aiResponse}\"}}");
 
-            // Désactivation de l'état thinking après la durée de l'animation
             yield return new WaitForSeconds(thinkingAnimationDuration);
             SetThinkingState(false);
 
-            // Activer l'état talking et commencer l'affichage
             SetTalkingState(true);
-            StartCoroutine(TypeMessage(aiResponse));
-
-
-            // Attente de la fin de l'affichage avant de retourner à l'etat Idle
+            yield return StartCoroutine(TypeMessage(aiResponse));
             yield return new WaitForSeconds(aiResponse.Length * 0.07f + 1.0f);
-
-            SetTalkingState(false); // Retour à l'état Idle
-
+            SetTalkingState(false);
         }
         else
         {
@@ -138,20 +146,16 @@ public class ChatManager : MonoBehaviour
             SetThinkingState(false);
         }
 
-        // Effacer le champ de texte.
         inputField.text = "";
     }
 
-    // Audio de l'avatar
-
-    void ClearChat()
+    private void ClearChat()
     {
         displayResponse.text = "";
         inputField.text = "";
-        converdationHistory.Clear();
+        conversationHistory.Clear();
     }
 
-    // Classes pour désérialiser la réponse JSON.
     [System.Serializable]
     public class ResponseData
     {
