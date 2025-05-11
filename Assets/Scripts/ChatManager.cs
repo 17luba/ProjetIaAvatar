@@ -24,10 +24,6 @@ public class ChatManager : MonoBehaviour
     public string apiKey = "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"; // clé API GroqCloud.
     public string systemMessage = "Tu es un clone amusant qui raconte des blagues et des anecdotes rigolotes.";
 
-    [Header("TTS Settings")]
-    public string playHTApiUrl = "https://api.play.ht/v1/convert";
-    public string playHTApiKey = "iI4O2BhnORdUm9lkG2eUtB3ncRP2";
-    public string voiceId = "s3://Voice-IDs/en_us/Atlas/female";
 
     [Header("Animation")]
     public Animator npcAnimator;
